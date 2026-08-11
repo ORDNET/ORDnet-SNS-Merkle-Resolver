@@ -58,7 +58,27 @@ node src/server.js
 | `RESOLVER_HOST` / `RESOLVER_PORT` | `127.0.0.1` / `8792` | Listen address |
 | `RESOLVER_RATE_LIMIT` | `120` | Per-IP requests per minute |
 
-Snapshots are produced by the commitment pipeline in
+## Get a snapshot
+
+ODNCA publishes the state snapshot daily, right after each on-chain commit:
+
+- **`https://odnca.org/snapshots/sns-latest.json.gz`** — the latest snapshot (gzip, ~33 MB)
+- **`https://odnca.org/snapshots/sns-latest.meta.json`** — its metadata: `h` (commit height), `sha256_gz`, `sha256_json`, `bytes_json`, `generated`
+- `https://odnca.org/snapshots/sns-<height>.json.gz` — height-pinned copies (last 7 days)
+
+Bootstrap in five lines:
+
+```bash
+curl -sO https://odnca.org/snapshots/sns-latest.json.gz
+curl -s https://odnca.org/snapshots/sns-latest.meta.json   # note sha256_gz, sha256_json
+sha256sum sns-latest.json.gz                               # must equal sha256_gz
+gunzip -k sns-latest.json.gz && sha256sum sns-latest.json  # must equal sha256_json
+RESOLVER_STATE_FILE=./sns-latest.json RESOLVER_COMMIT_ROOT=<root from the matching on-chain commit> node src/server.js
+```
+
+The hashes only prove you got the file intact; the *trust* step is the
+resolver itself recomputing the root and matching it to the on-chain
+commit. Snapshots are produced by the commitment pipeline in
 [ODNCA-verify/reference-implementation](https://github.com/ORDNET/ODNCA-verify)
 (the same export the daily on-chain commits are built from) — or by any
 conformant indexer following the published ruleset.
