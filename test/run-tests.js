@@ -127,7 +127,60 @@ r = await get("/selftest/spiek.web3");
 check("server-side selftest folds its own proof", r.body.folds_to_root === true);
 
 /* ------------------------------------------------------------ *
- * 5. Canonical leaf form stays frozen
+ * 5. Hostile input must never take the process down  (K3)
+ * ------------------------------------------------------------ */
+console.log("\n[survives hostile input]");
+
+// A raw fetch that tolerates a dead server, so a crash shows up as a
+// failed assertion instead of an unhandled rejection in the test run.
+const rawGet = async (path) => {
+  try {
+    const res = await fetch(`http://127.0.0.1:18792${path}`);
+    let body = null;
+    try { body = await res.json(); } catch { /* non-JSON body is fine here */ }
+    return { status: res.status, body };
+  } catch (e) {
+    return { status: 0, body: null, error: e.message };
+  }
+};
+
+// The exact request from the audit: decodeURIComponent used to throw here,
+// and an uncaught throw in a Node request handler kills the process.
+r = await rawGet("/resolve/%ZZ");
+check("malformed percent-escape returns 400 instead of crashing", r.status === 400 && r.body?.error === "invalid_address");
+
+check("server is STILL ALIVE after the malformed escape", (await rawGet("/health")).status === 200);
+
+// The same family of malformed input, on both decoding routes.
+for (const [label, path] of [
+  ["lone percent", "/resolve/%"],
+  ["truncated escape", "/resolve/%E0%A4"],
+  ["invalid hex digits", "/resolve/%GG.web3"],
+  ["percent at end", "/resolve/name.web3%"],
+  ["overlong surrogate", "/resolve/%ED%A0%80"],
+  ["malformed on selftest route", "/selftest/%ZZ"],
+]) {
+  r = await rawGet(path);
+  check(`${label} -> 4xx, no crash`, r.status >= 400 && r.status < 500);
+}
+
+check("server is STILL ALIVE after the whole malformed batch", (await rawGet("/health")).status === 200);
+
+// Absurd input must be refused cheaply rather than parsed.
+r = await rawGet("/resolve/" + "a".repeat(5000) + ".web3");
+check("over-long address is rejected", r.status === 400);
+check("server is STILL ALIVE after the over-long address", (await rawGet("/health")).status === 200);
+
+// Valid percent-encoding must keep working exactly as before.
+r = await rawGet("/resolve/caf%C3%A9.web3");
+check("valid percent-encoding still decodes correctly", r.status === 200 && r.body.name === "café.web3");
+
+// A route that decodes but is not an address is a 400, not a 500.
+r = await rawGet("/resolve/%2F%2F%2F");
+check("decodable but non-address input is a clean 400", r.status === 400);
+
+/* ------------------------------------------------------------ *
+ * 6. Canonical leaf form stays frozen
  * ------------------------------------------------------------ */
 console.log("\n[frozen leaf form]");
 check("leaf JSON key order is v,name,origin,outpoint,script,pubkey,h",

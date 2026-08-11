@@ -54,10 +54,36 @@ function json(res, status, body) {
   res.writeHead(status, {
     "content-type": "application/json; charset=utf-8",
     "access-control-allow-origin": "*",
+    "x-content-type-options": "nosniff",
   });
   res.end(JSON.stringify(body));
 }
 const fail = (res, status, code, message) => json(res, status, { ok: false, error: code, message });
+
+const MAX_ADDRESS_LEN = 2100; // SNS-NAME-1 caps a name at 2048 bytes
+
+/**
+ * Percent-decode a path segment without ever throwing.
+ *
+ * decodeURIComponent raises URIError on malformed input ("%ZZ", a lone
+ * "%", a truncated escape). Anything that throws inside a Node request
+ * handler becomes an uncaughtException, which kills the process — so a
+ * single GET could take the resolver down and, with a supervisor, put it
+ * in a restart loop that rebuilds the whole tree every time.
+ *
+ * Returns null for input that is not decodable; callers treat that as a
+ * malformed address, which is exactly what it is.
+ */
+function safeDecode(segment) {
+  if (typeof segment !== "string") return null;
+  // A committed name is bounded; anything far longer is not an address.
+  if (segment.length > MAX_ADDRESS_LEN) return null;
+  try {
+    return decodeURIComponent(segment);
+  } catch {
+    return null;
+  }
+}
 
 const buckets = new Map();
 function limited(ip) {
@@ -116,12 +142,32 @@ function answerFor(parsed) {
  * ------------------------------------------------------------------ */
 
 const server = createServer((req, res) => {
+  // One try/catch around the whole handler. In a Node request handler an
+  // uncaught throw is fatal to the process, so nothing in here — not a
+  // decode, not a malformed leaf, not a bug we have not found yet — may
+  // escape. The client gets a 500; the resolver stays up.
+  try {
+    handle(req, res);
+  } catch (err) {
+    console.error(`[resolver] handler error on ${req.method} ${req.url}:`, err && err.message);
+    if (!res.headersSent) fail(res, 500, "internal_error", "request could not be processed");
+    else try { res.end(); } catch {}
+  }
+});
+
+function handle(req, res) {
   const ip = req.socket.remoteAddress || "?";
   if (limited(ip)) return fail(res, 429, "rate_limited", "slow down");
-  const url = new URL(req.url, "http://x");
-  const parts = url.pathname.split("/").filter(Boolean);
 
   if (req.method !== "GET") return fail(res, 405, "method_not_allowed", "GET only");
+
+  let url;
+  try {
+    url = new URL(req.url, "http://x");
+  } catch {
+    return fail(res, 400, "bad_request", "unparseable request target");
+  }
+  const parts = url.pathname.split("/").filter(Boolean);
 
   if (parts[0] === "health") {
     return json(res, 200, {
@@ -139,7 +185,9 @@ const server = createServer((req, res) => {
   }
 
   if (parts[0] === "resolve" && parts.length === 2) {
-    const parsed = parseAddress(decodeURIComponent(parts[1]));
+    const decoded = safeDecode(parts[1]);
+    if (decoded === null) return fail(res, 400, "invalid_address", "address is not valid percent-encoded text");
+    const parsed = parseAddress(decoded);
     if (!parsed) return fail(res, 400, "invalid_address", "expected name.tld or mailbox@name.tld");
     const r = answerFor(parsed);
     return r.err ? fail(res, ...r.err) : json(res, 200, r.body);
@@ -147,7 +195,9 @@ const server = createServer((req, res) => {
 
   // Self-check: fold the proof server-side once more before answering.
   if (parts[0] === "selftest" && parts.length === 2) {
-    const parsed = parseAddress(decodeURIComponent(parts[1]));
+    const decoded = safeDecode(parts[1]);
+    if (decoded === null) return fail(res, 400, "invalid_address", "address is not valid percent-encoded text");
+    const parsed = parseAddress(decoded);
     if (!parsed) return fail(res, 400, "invalid_address", "bad address");
     const r = answerFor(parsed);
     if (r.err) return fail(res, ...r.err);
@@ -157,6 +207,24 @@ const server = createServer((req, res) => {
   }
 
   return fail(res, 404, "not_found", "routes: /resolve/<address>, /root, /health, /selftest/<address>");
+}
+
+// Malformed HTTP below the request layer (bad request line, oversized
+// headers) must not surface as an unhandled error event either.
+server.on("clientError", (err, socket) => {
+  if (socket.writable) socket.end("HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n");
+});
+
+// Last-resort net. The resolver holds a large in-memory tree that is
+// expensive to rebuild, and it serves read-only data from a snapshot it
+// already verified — staying up on an unexpected error is strictly better
+// for callers than a restart loop. Anything caught here is a bug; it is
+// logged loudly so it gets fixed, not swallowed quietly.
+process.on("uncaughtException", (err) => {
+  console.error("[resolver] UNCAUGHT EXCEPTION (staying up, please report):", err && err.stack);
+});
+process.on("unhandledRejection", (reason) => {
+  console.error("[resolver] UNHANDLED REJECTION (staying up, please report):", reason);
 });
 
 server.listen(config.port, config.host, () => {
