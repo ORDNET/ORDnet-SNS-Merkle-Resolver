@@ -1,0 +1,13 @@
+{
+  "name": "@ordnet/sns-merkle-resolver",
+  "version": "1.0.0",
+  "description": "Web3-name resolver without a trusted operator: proven answers with a merkle path to the on-chain committed root (ODNCA-STD-004).",
+  "type": "module",
+  "main": "src/server.js",
+  "scripts": { "start": "node src/server.js", "test": "node test/run-tests.js" },
+  "repository": { "type": "git", "url": "https://github.com/ORDNET/ORDnet-SNS-Merkle-Resolver.git" },
+  "keywords": ["bsv", "sns", "web3", "domains", "resolver", "merkle", "odnca", "trustless"],
+  "author": "ORDnet / ODNCA",
+  "license": "MIT",
+  "engines": { "node": ">=18" }
+}
