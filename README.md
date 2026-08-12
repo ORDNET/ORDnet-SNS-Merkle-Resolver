@@ -40,6 +40,37 @@ Consequence: the snapshot's *source* does not matter — ODNCA, a mirror, a
 friend, a torrent — only its *root* does. Get the bytes from anywhere;
 the chain decides whether they are the committed state.
 
+## Get a snapshot
+
+ODNCA publishes the committed state after every successful commit. These are
+plain files on a static host — no account, no API key, no rate limit:
+
+| File | What it is |
+|---|---|
+| `https://odnca.org/snapshots/sns-latest.json.gz` | the newest committed state, gzipped (~33 MB, ~206 MB unpacked) |
+| `https://odnca.org/snapshots/sns-latest.meta.json` | its height, byte size, and the sha256 of both the gzip and the unpacked JSON |
+| `https://odnca.org/snapshots/sns-<height>.json.gz` | a specific height; the last 7 are kept |
+
+Bootstrap in five lines:
+
+```bash
+curl -sO https://odnca.org/snapshots/sns-latest.json.gz
+curl -s  https://odnca.org/snapshots/sns-latest.meta.json    # note sha256_gz and h
+sha256sum sns-latest.json.gz                                 # must equal sha256_gz
+gunzip -c sns-latest.json.gz > state/sns.json
+curl -s  https://odnca.org/commits                           # root + txid for height h
+```
+
+Then start the resolver with `RESOLVER_COMMIT_ROOT` set to that root. It
+rebuilds the whole tree from the file and **refuses to serve** if the result
+does not reproduce it.
+
+That refusal is the reason the download source does not matter. The sha256
+above only tells you the bytes survived the wire; the root tells you they are
+the state ODNCA actually committed to the chain. A tampered snapshot from
+odnca.org itself fails exactly as loudly as one from a stranger — which is the
+point.
+
 ## Run
 
 ```bash
