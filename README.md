@@ -1,5 +1,11 @@
 # ORDnet-SNS-Merkle-Resolver
 
+[![tests](https://github.com/ORDNET/ORDnet-SNS-Merkle-Resolver/actions/workflows/test.yml/badge.svg)](https://github.com/ORDNET/ORDnet-SNS-Merkle-Resolver/actions/workflows/test.yml)
+[![test count](https://img.shields.io/badge/tests-34_passing-2b8a3e?style=flat-square)](#tests)
+[![dependencies](https://img.shields.io/badge/dependencies-zero-364fc7?style=flat-square)](#run)
+[![node](https://img.shields.io/badge/node-%E2%89%A5%2018-5f3dc4?style=flat-square)](#run)
+[![license](https://img.shields.io/badge/license-MIT-6a737d?style=flat-square)](LICENSE)
+
 An SNS (web3-name) resolver **without a trusted operator**: it resolves names from
 a committed state snapshot and puts a **merkle proof to the on-chain root**
 in every answer. Anyone can run it — no indexer, no database, no signing
@@ -26,6 +32,21 @@ commitment layer underneath is multi-protocol by design (`sns-commit`,
 `opns-commit`), so an OpNS variant — bare names, genesis-lineage
 verification — can follow as its own resolver against the `opns-commit`
 chain without touching this one.
+
+## Quick start
+
+Prove to yourself that it works before trusting anything — no install step:
+
+```bash
+git clone https://github.com/ORDNET/ORDnet-SNS-Merkle-Resolver && cd ORDnet-SNS-Merkle-Resolver
+npm test
+# -> RESULT: 34 passed, 0 failed
+```
+
+The suite builds trees, folds proofs with an independent reimplementation and
+fires hostile input at the routes — on bare Node, no network. To actually
+serve names you need a committed state snapshot and its on-chain root: that is
+the next two sections, and it takes about five minutes.
 
 ## The trustless bootstrap
 
@@ -83,11 +104,19 @@ node src/server.js
 | Variable | Default | Meaning |
 |---|---|---|
 | `RESOLVER_STATE_FILE` | `./state/sns.json` | The state snapshot to serve |
-| `RESOLVER_COMMIT_ROOT` | *(empty)* | On-chain root the snapshot must reproduce; empty = serve unanchored (dev only) |
+| `RESOLVER_COMMIT_ROOT` | *(empty)* | On-chain root the snapshot must reproduce; empty = serve unanchored (**dev only — see warning below**) |
 | `RESOLVER_COMMIT_TXID` | *(empty)* | Commit inscription txid, echoed in every proof |
 | `RESOLVER_RULESET_HASH` | *(empty)* | Frozen ruleset hash, echoed in every proof |
 | `RESOLVER_HOST` / `RESOLVER_PORT` | `127.0.0.1` / `8792` | Listen address |
 | `RESOLVER_RATE_LIMIT` | `120` | Per-IP requests per minute |
+
+> **Production warning — never run unanchored in production.** Without
+> `RESOLVER_COMMIT_ROOT` the resolver starts anyway and announces
+> `serving UNANCHORED` in its startup log only: every answer still carries a
+> proof, but to a root nothing on-chain vouches for. With the root set, a
+> wrong snapshot is refused loudly at startup ("STATE REFUSED") — that
+> refusal is this resolver's entire security model, so give it the chance to
+> do its job. A refuse-to-start guard for missing roots is on the roadmap.
 
 Snapshots are produced by the commitment pipeline in
 [ODNCA-verify/reference-implementation](https://github.com/ORDNET/ODNCA-verify)
